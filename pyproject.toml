@@ -101,6 +101,16 @@ typing = [
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build.targets.sdist]
+include = [
+  "/docs",
+  "/src",
+  "/tests",
+  ".pre-commit-config.yaml",
+  "certwrangler.example.yaml",
+  "uv.lock",
+]
+
 [tool.ruff]
 src = [ "src" ]
 fix = true
