@@ -104,9 +104,6 @@ source = "vcs"
 [tool.hatch.build.targets.sdist]
 only-include = [ "src", "tests" ]
 
-[tool.hatch.build.targets.wheel]
-packages = [ "src/certwrangler", "tests" ]
-
 [tool.ruff]
 src = [ "src" ]
 fix = true
