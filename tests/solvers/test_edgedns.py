@@ -20,17 +20,31 @@ class TestEdgeDNSSolver:
         (plugin,) = entry_points(group="certwrangler.solver", name="edgedns")
         assert plugin.load() == EdgeDNSSolver
 
-    def test_ENDPOINT_PATTERN(self):
+    @pytest.mark.parametrize(
+        ["api_endpoint", "name"],
+        [
+            (
+                "https://dummyapi.example.com/config-dns/v2/zones/example.com/names/example.com/types/TXT",
+                "",
+            ),
+            (
+                "https://dummyapi.example.com/config-dns/v2/zones/example.com/names/_acme-challenge.example.com/types/TXT",
+                "_acme-challenge",
+            ),
+        ],
+    )
+    def test_ENDPOINT_PATTERN(self, click_ctx, solver_edgedns, api_endpoint, name):
         """
         Test that the endpoint pattern renders as expected.
         """
+        solver_edgedns.initialize()
         assert (
             ENDPOINT_PATTERN.format(
                 host="dummyapi.example.com",
                 domain="example.com",
-                name="_acme-challenge",
+                fqdn=solver_edgedns._build_fqdn(name, "example.com"),
             )
-            == "https://dummyapi.example.com/config-dns/v2/zones/example.com/names/_acme-challenge.example.com/types/TXT"
+            == api_endpoint
         )
 
     def test_config_invalid_host(self, click_ctx, solver_edgedns_config):
@@ -76,21 +90,33 @@ class TestEdgeDNSSolver:
         solver.initialize()
         assert isinstance(solver._session.auth, EdgeGridAuth)
 
-    def test_create_new(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_create_new(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we can create a new record when no TXT record exists.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host,
+            fqdn=fqdn,
+            **kwargs,
+        )
 
         def _post_callback(request, context):
             assert request.json() == {
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": [kwargs["content"]],
@@ -104,21 +130,31 @@ class TestEdgeDNSSolver:
         assert requests_mock.request_history[0].method == "GET"
         assert requests_mock.request_history[1].method == "POST"
 
-    def test_create_update(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_create_update(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we can update an existing TXT record when one already exists.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         def _put_callback(request, context):
             assert request.json() == {
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": ["legit record", kwargs["content"]],
@@ -129,7 +165,7 @@ class TestEdgeDNSSolver:
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": ["legit record"],
@@ -141,23 +177,33 @@ class TestEdgeDNSSolver:
         assert requests_mock.request_history[0].method == "GET"
         assert requests_mock.request_history[1].method == "PUT"
 
-    def test_create_existing(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_create_existing(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we don't take action when a TXT record is already in place.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         requests_mock.get(
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": ["other", kwargs["content"]],
@@ -167,23 +213,33 @@ class TestEdgeDNSSolver:
         assert len(requests_mock.request_history) == 1
         assert requests_mock.request_history[0].method == "GET"
 
-    def test_create_bad_response(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_create_bad_response(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we throw an exception if we get a bogus response on create.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         requests_mock.get(
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": "bad data",
@@ -194,23 +250,33 @@ class TestEdgeDNSSolver:
         ):
             solver_edgedns.create(**kwargs)
 
-    def test_delete_last_item(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_delete_last_item(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we completely delete the TXT record if we remove the last entry.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         requests_mock.get(
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": [kwargs["content"]],
@@ -222,21 +288,31 @@ class TestEdgeDNSSolver:
         assert requests_mock.request_history[0].method == "GET"
         assert requests_mock.request_history[1].method == "DELETE"
 
-    def test_delete_update(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_delete_update(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we only delete a single entry from a TXT record with multiple entries.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         def _put_callback(request, context):
             assert request.json() == {
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": ["legit record"],
@@ -247,7 +323,7 @@ class TestEdgeDNSSolver:
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": ["legit record", kwargs["content"]],
@@ -259,40 +335,60 @@ class TestEdgeDNSSolver:
         assert requests_mock.request_history[0].method == "GET"
         assert requests_mock.request_history[1].method == "PUT"
 
-    def test_delete_no_record(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_delete_no_record(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we don't take action when a TXT record is already deleted.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         requests_mock.get(endpoint, status_code=404)
         solver_edgedns.delete(**kwargs)
         assert len(requests_mock.request_history) == 1
         assert requests_mock.request_history[0].method == "GET"
 
-    def test_delete_no_content(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_delete_no_content(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we don't take action when a TXT doesn't have the content to be removed.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         requests_mock.get(
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": ["legit record"],
@@ -302,23 +398,33 @@ class TestEdgeDNSSolver:
         assert len(requests_mock.request_history) == 1
         assert requests_mock.request_history[0].method == "GET"
 
-    def test_delete_bad_response(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test_delete_bad_response(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we throw an exception if we get a bogus response on delete.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         kwargs = {
             "domain": "example.com",
-            "name": "_acme-challenge",
+            "name": name,
             "content": "test content",
         }
-        endpoint = ENDPOINT_PATTERN.format(host=solver_edgedns.host, **kwargs)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=solver_edgedns.host, fqdn=fqdn, **kwargs
+        )
 
         requests_mock.get(
             endpoint,
             status_code=200,
             json={
-                "name": "{name}.{domain}".format(**kwargs),
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": "bad data",
@@ -346,13 +452,21 @@ class TestEdgeDNSSolver:
         assert response["rdata"][3] == 'test"'
         assert response["rdata"][4] == '"test"'
 
-    def test__delete(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test__delete(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we can issue a well-formed DELETE.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         endpoint = ENDPOINT_PATTERN.format(
-            host=solver_edgedns.host, domain="example.com", name="_acme-challenge"
+            host=solver_edgedns.host, fqdn=fqdn, domain="example.com", name=name
         )
 
         # test that 404 and 403 raise exceptions
@@ -383,13 +497,21 @@ class TestEdgeDNSSolver:
         assert solver_edgedns._delete(endpoint) == b"ok"
         assert len(requests_mock.request_history) == 1
 
-    def test__get(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test__get(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we can issue a well-formed GET.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         endpoint = ENDPOINT_PATTERN.format(
-            host=solver_edgedns.host, domain="example.com", name="_acme-challenge"
+            host=solver_edgedns.host, fqdn=fqdn, domain="example.com", name=name
         )
 
         # test that 404 returns None
@@ -422,13 +544,21 @@ class TestEdgeDNSSolver:
         assert solver_edgedns._get(endpoint) == {"test": True}
         assert len(requests_mock.request_history) == 1
 
-    def test__post(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test__post(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we can issue a well-formed POST.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         endpoint = ENDPOINT_PATTERN.format(
-            host=solver_edgedns.host, domain="example.com", name="_acme-challenge"
+            host=solver_edgedns.host, fqdn=fqdn, domain="example.com", name=name
         )
 
         # test that 403 raises an exception
@@ -456,13 +586,21 @@ class TestEdgeDNSSolver:
         assert solver_edgedns._post(endpoint, {"dns": "please make"}) == {"dns": "sure"}
         assert len(requests_mock.request_history) == 1
 
-    def test__put(self, click_ctx, solver_edgedns, requests_mock):
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "_acme-challenge",
+            "",
+        ],
+    )
+    def test__put(self, click_ctx, solver_edgedns, requests_mock, name):
         """
         Test that we can issue a well-formed PUT.
         """
         solver_edgedns.initialize()
+        fqdn = solver_edgedns._build_fqdn(name, "example.com")
         endpoint = ENDPOINT_PATTERN.format(
-            host=solver_edgedns.host, domain="example.com", name="_acme-challenge"
+            host=solver_edgedns.host, fqdn=fqdn, domain="example.com", name=name
         )
 
         # test that 403 raises an exception

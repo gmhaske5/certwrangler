@@ -22,9 +22,7 @@ log = logging.getLogger(__name__)
 #   https://techdocs.akamai.com/edge-dns/reference/get-zone-name-type
 #   https://techdocs.akamai.com/edge-dns/reference/post-zones-zone-names-name-types-type
 #   https://techdocs.akamai.com/edge-dns/reference/put-zones-zone-names-name-types-type
-ENDPOINT_PATTERN = (
-    "https://{host}/config-dns/v2/zones/{domain}/names/{name}.{domain}/types/TXT"
-)
+ENDPOINT_PATTERN = "https://{host}/config-dns/v2/zones/{domain}/names/{fqdn}/types/TXT"
 
 
 class EdgeDNSSolver(Solver):
@@ -50,6 +48,12 @@ class EdgeDNSSolver(Solver):
             access_token=self.access_token,
         )
 
+    def _build_fqdn(self, name: str, domain: str) -> str:
+        """Build the fully-qualified domain name for EdgeDNS endpoints."""
+        if name and name != "":
+            return f"{name}.{domain}"
+        return domain
+
     def create(self, name: str, domain: str, content: str) -> None:
         """
         Create a TXT record in EdgeDNS.
@@ -60,13 +64,18 @@ class EdgeDNSSolver(Solver):
         log.info(
             f"Solver '{self.name}' creating TXT '{name}' zone '{domain}' - '{content}'..."
         )
-        endpoint = ENDPOINT_PATTERN.format(host=self.host, domain=domain, name=name)
+        fqdn = self._build_fqdn(name, domain)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=self.host,
+            domain=domain,
+            fqdn=fqdn,
+        )
         log.debug(f"Sending GET to '{endpoint}' to get current TXT record.")
         record = self._get(endpoint)
         log.debug(f"Got '{record}' from '{endpoint}'.")
         if record is None:
             record = {
-                "name": f"{name}.{domain}",
+                "name": fqdn,
                 "type": "TXT",
                 "ttl": 300,
                 "rdata": [content],
@@ -96,7 +105,12 @@ class EdgeDNSSolver(Solver):
         log.info(
             f"Solver '{self.name}' deleting TXT '{name}' zone '{domain}' - '{content}'..."
         )
-        endpoint = ENDPOINT_PATTERN.format(host=self.host, domain=domain, name=name)
+        fqdn = self._build_fqdn(name, domain)
+        endpoint = ENDPOINT_PATTERN.format(
+            host=self.host,
+            domain=domain,
+            fqdn=fqdn,
+        )
         log.debug(f"Sending GET to '{endpoint}' to get current TXT record.")
         record = self._get(endpoint)
         log.debug(f"Got '{record}' from '{endpoint}'.")
